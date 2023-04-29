@@ -1,15 +1,30 @@
 {
-  "name": "azure-queue-consumer",
-  "version": "0.0.1",
-  "description": "Port of sqs-consumer for Azure data queue",
+  "name": "azure-queue-subscriber",
+  "version": "1.0.1",
+  "description": "A package for consuming messages from an Azure Queue",
   "main": "index.js",
   "scripts": {
     "test": "mocha",
-    "coverage": "istanbul cover _mocha -- -R dot && open coverage/lcov-report/index.html",
+    "coverage": "nyc npm run test",
     "lcov": "istanbul cover _mocha -- -R dot",
     "lint": "eslint .",
     "posttest": "npm run lint"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oluwatobiiloba/azure-queue-subscriber"
+  },
+  "license": "MIT",
+  "keywords": [
+    "azure",
+    "queue",
+    "subscriber",
+    "consumer",
+    "listener",
+    "message"
+  ],
+  "author": "oluwatobiloba.f.a@gmail.com",
+  "sourceRepo": "https://github.com/cjsheets/azure-queue-consumer",
   "devDependencies": {
     "eslint": "^8.39.0",
     "eslint-config-iplayer-jsx": "^6.0.0",
@@ -22,7 +37,8 @@
     "auto-bind": "^1.1.0",
     "chai": "^4.3.7",
     "debug": "^2.1.0",
-    "dotenv": "^16.0.3"
+    "dotenv": "^16.0.3",
+    "nyc": "^15.1.0"
   },
   "eslintConfig": {
     "extends": "iplayer-jsx",
