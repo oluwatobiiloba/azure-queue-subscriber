@@ -10,6 +10,7 @@ declare namespace Consumer {
         waitTimeSeconds?: number;
         authenticationErrorTimeout?: number;
         queueService?: azure.QueueClient;
+        autoBind: autoBind
     }
 }
 

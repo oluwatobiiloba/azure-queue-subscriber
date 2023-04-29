@@ -1,11 +1,10 @@
 'use strict';
 
 const EventEmitter = require('events').EventEmitter;
-const { QueueClient, QueueServiceClient } = require("@azure/storage-queue");
+const { QueueClient } = require('@azure/storage-queue');
 const debug = require('debug')('azure-queue-consumer');
-const auto = require('auto-bind');
 const requiredOptions = ['queueName', 'handleMessage', 'connectionString'];
-
+const autoBind = require('auto-bind');
 
 class QueueServiceError extends Error {
   constructor() {
@@ -13,7 +12,6 @@ class QueueServiceError extends Error {
     this.name = this.constructor.name;
   }
 }
-
 
 /**
  * Validates options object.
@@ -26,13 +24,12 @@ function validate(options, requiredOptions) {
     if (!options[option]) {
       throw new Error(`${option} is required.`);
     }
-  }  
+  }
 
   if (options.batchSize > 10 || options.batchSize < 1) {
     throw new Error('Batch size must be between 1 and 10.');
   }
 }
-
 
 /**
  * Checks if an error is due to authentication failure.
@@ -50,10 +47,8 @@ function isAuthenticationError(err) {
 class Consumer extends EventEmitter {
   constructor(options) {
     super();
-    
     // Validate options passed into the class constructor
     validate(options, requiredOptions);
-    
     // Set properties of the Consumer instance based on the passed in options object
     this.connectionString = options.connectionString;
     this.queueName = options.queueName;
@@ -69,9 +64,8 @@ class Consumer extends EventEmitter {
     this.maximumExecutionTimeSeconds = options.maximumExecutionTimeSeconds || 10;
     this.authenticationErrorTimeoutSeconds = options.authenticationErrorTimeoutSeconds || 10;
     this.queueService = options.queueService || new QueueClient(this.connectionString, this.queueName);
-
     // Bind `this` to methods used by the class
-    auto(this);
+    autoBind(this);
   }
 
   /**
@@ -99,6 +93,7 @@ class Consumer extends EventEmitter {
    */
   stop() {
     debug('Stopping consumer');
+    this.emit('stopped');
     this.stopped = true;
   }
 
@@ -134,14 +129,12 @@ class Consumer extends EventEmitter {
    */
   async _handleQueueServiceResponse(err, response) {
     const consumer = this;
-  
     if (err || !response) {
       this.emit('error', new QueueServiceError('Queue service receive message failed: ' + err.message));
     }
-  
     debug('Received queue service response');
     debug(response);
-
+    if (response?.receivedMessageItems?.length === 0) consumer.emit('No messages availabe to be processed');
     if (response && response?.receivedMessageItems.length > 0) {
       // If there are messages in the response, process them.
       for (const message of response.receivedMessageItems) {
@@ -163,7 +156,6 @@ class Consumer extends EventEmitter {
 
       // Poll again for new messages once all messages in the queue response have been processed.
       consumer._poll();
-      
     } else if (err && isAuthenticationError(err)) {
       // If there was an authentication error, pause polling for a bit before retrying.
       debug('There was an error with your credentials. Pausing before retrying.');
@@ -173,16 +165,14 @@ class Consumer extends EventEmitter {
       setTimeout(() => consumer._poll(), consumer.pollDelaySeconds * 1000);
     }
   }
-  
+
   /**
    * Private method to process an individual message from the queue.
    * @param {Object} message - The message object being processed.
    */
   async _processMessage(message) {
-    const consumer  = this;
-  
+    const consumer = this;
     this.emit('message_received', message);
-  
     try {
       await new Promise((resolve, reject) => {
         consumer.handleMessage(message, (err) => {
@@ -193,7 +183,7 @@ class Consumer extends EventEmitter {
           }
         });
       });
-  
+
       await consumer._deleteMessage(message);
 
       this.emit('message_processed', message);
@@ -203,7 +193,7 @@ class Consumer extends EventEmitter {
       throw err;
     }
   }
-  
+
   /**
    * Private method to handle errors that occur while processing messages.
    * @param {Error} err - The error object that was thrown.
@@ -217,7 +207,7 @@ class Consumer extends EventEmitter {
       this.emit('processing_error', err, message);
     }
   }
-  
+
   /**
    * Private method to delete a message from the queue after it has been processed.
    * @param {Object} message - The message object to be deleted.

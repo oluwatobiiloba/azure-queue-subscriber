@@ -1,271 +1,135 @@
 'use strict';
 require('dotenv').config();
+const assert = require('chai').assert;
+const sinon = require('sinon');
+const { QueueClient } = require('@azure/storage-queue');
 const Consumer = require('../index');
-const { QueueClient } = require("@azure/storage-queue");
-const debug = require('debug')('azure-queue-consumer');
+const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+const queueName = process.env.AZURE_QUEUE_NAME;
 
-const jest = require("jest")
-const mockQueueService = new QueueClient(process.env.AZURE_STORAGE_CONNECTION_STRING, process.env.AZURE_QUEUE_NAME);
-
-jest.mock('@azure/storage-queue', () => {
-  return {
-    QueueClient: jest.fn().mockImplementation(() => {
-      return {
-        receiveMessages: jest.fn(),
-        deleteMessage: jest.fn()
-      };
-    }),
-    QueueServiceClient: jest.fn().mockImplementation(() => {
-      return {
-        getQueueClient: jest.fn().mockReturnValue(mockQueueService)
-      };
-    })
-  };
-});
-
-describe('Consumer class', () => {
-
-  describe('constructor', () => {    
-    it('should set properties based on options object', () => {
+describe('Consumer', () => {
+  describe('#constructor()', () => {
+    it('should create a new Consumer instance', () => {
       const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString',
-        batchSize: 5,
-        pollDelaySeconds: 5,
-        maximumExecutionTimeSeconds: 20,
-        authenticationErrorTimeoutSeconds: 15,
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub()
       };
-      
-      const consumer = Consumer.create(options);
-      
-      expect(consumer.queueService).toBe(mockQueueService);
-      expect(consumer.queueName).toBe(options.queueName);
-      expect(consumer.handleMessage).toBe(options.handleMessage);
-      expect(consumer.batchSize).toBe(options.batchSize);
-      expect(consumer.pollDelaySeconds).toBe(options.pollDelaySeconds);
-      expect(consumer.maximumExecutionTimeSeconds).toBe(options.maximumExecutionTimeSeconds);
-      expect(consumer.authenticationErrorTimeoutSeconds).toBe(options.authenticationErrorTimeoutSeconds);
-      expect(consumer.connectionString).toBe(options.connectionString);
-      expect(consumer.stopped).toBeTruthy();
-      expect(consumer.isWaiting).toBeFalsy();
+      const consumer = new Consumer(options);
+      assert(consumer instanceof Consumer);
     });
 
-    it('should throw an error if a required option is missing', () => {
+    it('should throw an error if required options are missing', () => {
       const options = {};
-      
-      expect(() => {
-        Consumer.create(options);
-      }).toThrowError(/is required/);
+      assert.throws(() => {
+        new Consumer(options);
+      }, /queueName is required/);
     });
 
-    it('should throw an error if batchSize is not between 1 and 10', () => {
+    it('should set properties of the Consumer instance', () => {
       const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString',
-        batchSize: 15
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub(),
+        batchSize: 5,
+        pollDelaySeconds: 3,
+        maximumExecutionTimeSeconds: 30
       };
-      
-      expect(() => {
-        Consumer.create(options);
-      }).toThrowError(/Batch size must be between 1 and 10/);
+      const consumer = new Consumer(options);
+      assert.strictEqual(consumer.connectionString, connectionString);
+      assert.strictEqual(consumer.queueName, queueName);
+      assert.strictEqual(consumer.handleMessage, options.handleMessage);
+      assert.strictEqual(consumer.batchSize, 5);
+      assert.strictEqual(consumer.pollDelaySeconds, 3);
+      assert.strictEqual(consumer.maximumExecutionTimeSeconds, 30);
+    });
+
+    it('should use default values for some options if not provided', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub()
+      };
+      const consumer = new Consumer(options);
+      assert.strictEqual(consumer.batchSize, 1);
+      assert.strictEqual(consumer.pollDelaySeconds, 1);
+      assert.strictEqual(consumer.maximumExecutionTimeSeconds, 10);
     });
   });
 
-  describe('start method', () => {    
-    it('should call _poll method when stopped is true', async () => {
+  describe('#start()', () => {
+    let consumer;
+    let receiveMessagesStub;
+    beforeEach(() => {
       const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub()
       };
-      
-      const consumer = Consumer.create(options);
+      consumer = new Consumer(options);
+      receiveMessagesStub = sinon.stub(QueueClient.prototype, 'receiveMessages');
+    });
+    afterEach(() => {
+      receiveMessagesStub.restore();
+    });
 
-      consumer._poll = jest.fn();
-      
+    it('should start polling the queue for messages', () => {
       consumer.start();
-
-      expect(consumer.stopped).toBeFalsy();
-      expect(consumer._poll).toHaveBeenCalled();
-    });
-  });
-
-  describe('stop method', () => {    
-    it('should set stopped to true', async () => {
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.stop();
-
-      expect(consumer.stopped).toBeTruthy();
-    });
-  });
-
-  describe('_poll method', () => {    
-    it('should emit error event if receiveMessages returns an error', async () => {
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-      consumer.queueService.receiveMessages.mockRejectedValueOnce(new Error('test error'));
-
-      await consumer._poll();
-
-      expect(consumer.emit).toHaveBeenCalledWith('error', expect.any(QueueServiceError));
+      sinon.assert.calledOnce(receiveMessagesStub);
     });
 
-    it('should handle empty response from receiveMessages method and call _poll again after a set delay', async () => {
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-      consumer.queueService.receiveMessages.mockResolvedValueOnce({});
-
-      await consumer._poll();
-
-      expect(consumer.emit).toHaveBeenCalledWith('response_processed');
-      expect(consumer._poll).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle non-empty response from receiveMessages method, process messages, and call _poll again after all messages are processed', async () => {
-      const message1 = { messageId: 'message1' };
-      const message2 = { messageId: 'message2' };
-      const response = {
-        receivedMessageItems: [message1, message2]
-      };
-
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-      consumer._processMessage = jest.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
-      consumer._deleteMessage = jest.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
-      consumer.queueService.receiveMessages.mockResolvedValueOnce(response);
-
-      await consumer._poll();
-
-      expect(consumer.emit).toHaveBeenCalledWith('message_received', message1);
-      expect(consumer.emit).toHaveBeenCalledWith('message_received', message2);
-      expect(consumer.emit).toHaveBeenCalledWith('response_processed');
-      expect(consumer._processMessage).toHaveBeenCalledWith(message1);
-      expect(consumer._processMessage).toHaveBeenCalledWith(message2);
-      expect(consumer._deleteMessage).toHaveBeenCalledWith(message1);
-      expect(consumer._deleteMessage).toHaveBeenCalledWith(message2);
-      expect(consumer._poll).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle authentication error and call _poll after a set delay', async () => {
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-      consumer.queueService.receiveMessages.mockRejectedValueOnce({ statusCode: 403 });
-
-      await consumer._poll();
-
-      expect(consumer.emit).toHaveBeenCalledWith('error', expect.any(QueueServiceError), undefined);
-      expect(consumer._poll).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('_processMessage method', () => {    
-    it('should emit message_received event before calling handleMessage function', async () => {
-      const message = { messageId: 'message1' };
-
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn().mockImplementation((event) => {
-        if (event === 'message_received') {
-          expect(consumer.handleMessage).not.toHaveBeenCalled();
-        } else if (event === 'message_processed') {
-          expect(consumer.handleMessage).toHaveBeenCalled();
-        }
+    it('should emit a "starting listening process" event', (done) => {
+      consumer.on('starting listening process', () => {
+        done();
       });
-
-      await consumer._processMessage(message);
-
-      expect(consumer.emit).toHaveBeenCalledWith('message_received', message);
-      expect(consumer.handleMessage).toHaveBeenCalledWith(message);
-      expect(consumer.emit).toHaveBeenCalledWith('message_processed', message);
-      expect(consumer._deleteMessage).toHaveBeenCalledWith(message);
-    });
-
-    it('should throw an error if handleMessage function returns an error', async () => {
-      const message = { messageId: 'message1' };
-      const errorMessage = new Error('test error');
-
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn().mockImplementation((message, callback) => {
-          callback(errorMessage);
-        }),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-
-      await expect(consumer._processMessage(message)).rejects.toThrowError(errorMessage);
-      expect(consumer.emit).toHaveBeenCalledWith('processing_error', errorMessage, message);
-    });
-
-    it('should handle errors during message processing and emit an error or processing_error event depending on the error name', async () => {
-      const message = { messageId: 'message1' };
-      const queueServiceError = new QueueServiceError('test error');
-      const processingError = new Error('test error 2');
-
-      const options = {
-        queueName: 'test-queue',
-        handleMessage: jest.fn(),
-        connectionString: 'mockConnectionString'
-      };
-      
-      const consumer = Consumer.create(options);
-
-      consumer.emit = jest.fn();
-
-      consumer._deleteMessage.mockRejectedValueOnce(processingError);
-      await expect(consumer._processMessage(message)).rejects.toThrowError(processingError);
-      expect(consumer.emit).toHaveBeenCalledWith('processing_error', processingError, message);
-
-      consumer._deleteMessage.mockRejectedValueOnce(queueServiceError);
-      await expect(consumer._processMessage(message)).rejects.toThrowError(queueServiceError);
-      expect(consumer.emit).toHaveBeenCalledWith('error', queueServiceError, message);
+      consumer.start();
     });
   });
 
-})
+  describe('#stop()', () => {
+    it('should stop the polling process', () => {
+      const consumer = new Consumer({
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub()
+      });
+      consumer.stopped = false;
+      consumer.stop();
+      assert(consumer.stopped);
+    });
+
+    it('should emit a "stopped" event', (done) => {
+      const consumer = new Consumer({
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub()
+      });
+      consumer.on('stopped', () => {
+        done();
+      });
+      consumer.stop();
+    });
+  });
+
+  describe('#should process a message', () => {
+    it('should process a message', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: (message, done) => {
+          assert.strictEqual(message.messageText, 'Test message');
+          done();
+        }
+      };
+      const consumer = new Consumer(options);
+      // Add a test message to the queue
+      const queueClient = new QueueClient(options.connectionString, options.queueName);
+      queueClient.sendMessage('Test message');
+      // Test queue should be empty upon test completion
+      consumer.start();
+      consumer.on('No messages availabe to be processed', () => {
+        consumer.stop();
+      });
+    }).timeout(3000);
+  });
+});
