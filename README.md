@@ -71,8 +71,9 @@ const Consumer = require('azure-queue-subscriber');
 const consumer = new Consumer({
   connectionString: '<your-storage-account-connection-string>',
   queueName: '<your-queue-name>',
-  handleMessage: async (message) => {
+  handleMessage: async (message,done) => {
     console.log('Received message:', message.messageText);
+    done()
     // Process message here
   }
 });
