@@ -2,7 +2,7 @@
 
 const EventEmitter = require('events').EventEmitter;
 const { QueueClient } = require('@azure/storage-queue');
-const debug = require('debug')('azure-queue-consumer');
+const debug = require('debug')('azure-queue-subscriber');
 const requiredOptions = ['queueName', 'handleMessage', 'connectionString'];
 const autoBind = require('auto-bind');
 
