@@ -33,6 +33,7 @@ The `options` parameter is an object that contains the following properties:
 - `maximumExecutionTimeSeconds`: The maximum amount of time (in seconds) that a message can be locked for processing. Defaults to 10.
 - `authenticationErrorTimeoutSeconds`: The amount of time (in seconds) to wait before retrying after an authentication error. Defaults to 10.
 - `queueService`: An instance of the `QueueClient` class from the `@azure/storage-queue` package. This is optional and can be used if you need more control over the queue service.
+- `maximumRetries`: The total number of retries for failed jobs before it gets deleted from the queue.
 
 ### Methods
 
