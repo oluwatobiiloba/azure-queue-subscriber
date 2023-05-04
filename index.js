@@ -5,8 +5,6 @@ const { QueueClient } = require('@azure/storage-queue');
 const debug = require('debug')('azure-queue-subscriber');
 const requiredOptions = ['queueName', 'handleMessage', 'connectionString'];
 const autoBind = require('auto-bind');
-const { BlobServiceClient } = require('@azure/storage-blob');
-const { v4: uuidv4 } = require('uuid');
 
 class QueueServiceError extends Error {
   constructor() {
@@ -65,16 +63,7 @@ class Consumer extends EventEmitter {
     this.pollDelaySeconds = options.pollDelaySeconds || 1;
     this.maximumExecutionTimeSeconds = options.maximumExecutionTimeSeconds || 10;
     this.authenticationErrorTimeoutSeconds = options.authenticationErrorTimeoutSeconds || 10;
-    this.useAcquireLease = options.useAcquireLease || false;
-    this.leaseDuration = options.leaseDuration || 60;
-    this.blobConnectionString = options.blobConnectionString || null;
-    this.containerName = options.containerName || 'queue-job-locks';
-    this.blobName = options.blobName || "job-lock";
-    this.blobService = this.blobConnectionString ? options.blobService || new BlobServiceClient.fromConnectionString(this.blobConnectionString) : null ;
     this.queueService = options.queueService || new QueueClient(this.connectionString, this.queueName);
-    this.blobClient = this.blobService ? this.blobService.getContainerClient(this.containerName).getBlockBlobClient(this.blobName) : null ;
-    this.leaseClient = null ;
-
     // Bind `this` to methods used by the class
     autoBind(this);
   }
@@ -182,15 +171,9 @@ class Consumer extends EventEmitter {
    * @param {Object} message - The message object being processed.
    */
   async _processMessage(message) {
-    const leaseId =  uuidv4() 
     const consumer = this;
-    let leaseClient = null 
     this.emit('message_received', message);
-    if(this.useLease && leaseId && this.blobClient ){
-      leaseClient = this.blobClient.getBlobLeaseClient(leaseId)  
-    }
     try {
-      await this._acquireLease(this.leaseClient)
       await new Promise((resolve, reject) => {
         consumer.handleMessage(message, (err) => {
           if (err) {
@@ -201,14 +184,12 @@ class Consumer extends EventEmitter {
         });
       });
 
-      await this._releaseLease(leaseClient)
       await consumer._deleteMessage(message);
 
       this.emit('message_processed', message);
     } catch (err) {
       // If there is an error while processing a message, call `_handleError()` and throw the error.
       this._handleError(err, message);
-      await this._releaseLease(leaseClient)
       throw err;
     }
   }
@@ -226,17 +207,6 @@ class Consumer extends EventEmitter {
       this.emit('processing_error', err, message);
     }
   }
-
-  async _acquireLease(leaseClient) {
-            await leaseClient.acquireLease((this.leaseDuration))
-            this.emit('job locked',message.messageId)
-  }
-
-  async _releaseLease(leaseClient) {
-          await leaseClient.releaseLease();
-          this.emit('job released',message.messageId)   
-} 
-
 
   /**
    * Private method to delete a message from the queue after it has been processed.
