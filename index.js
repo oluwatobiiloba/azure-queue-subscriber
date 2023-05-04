@@ -64,6 +64,7 @@ class Consumer extends EventEmitter {
     this.maximumExecutionTimeSeconds = options.maximumExecutionTimeSeconds || 10;
     this.authenticationErrorTimeoutSeconds = options.authenticationErrorTimeoutSeconds || 10;
     this.queueService = options.queueService || new QueueClient(this.connectionString, this.queueName);
+    this.maximumRetries = options.maximumRetries || null;
     // Bind `this` to methods used by the class
     autoBind(this);
   }
@@ -128,41 +129,51 @@ class Consumer extends EventEmitter {
    * @param {Object} response - The response object returned from the queue service or null.
    */
   async _handleQueueServiceResponse(err, response) {
-    const consumer = this;
+    const subscriber = this;
     if (err || !response) {
       this.emit('error', new QueueServiceError('Queue service receive message failed: ' + err.message));
     }
     debug('Received queue service response');
     debug(response);
-    if (response?.receivedMessageItems?.length === 0) consumer.emit('No messages availabe to be processed');
+    if (response?.receivedMessageItems?.length === 0) subscriber.emit('No messages availabe to be processed');
     if (response && response?.receivedMessageItems.length > 0) {
       // If there are messages in the response, process them.
       for (const message of response.receivedMessageItems) {
-        try {
-          await this._processMessage(message);
-          consumer.emit('message_processed', message);
-        } catch (err) {
-          // If there is an error processing the message, emit either an `error` or `processing_error` event depending on the error name.
-          if (err.name === QueueServiceError.name) {
-            consumer.emit('error', err, message);
-          } else {
-            consumer.emit('processing_error', err, message);
+          try {
+            if ((message.dequeueCount > this.maximumRetries) || !this.maximumRetries) {
+              await this._processMessage(message);
+              subscriber.emit('message_processed', message);
+              return;
+            }
+            
+            await this._deleteMessage(message);
+            const errorMessage = `message failed after ${message.dequeueCount} times and will be deleted`;
+            debug(errorMessage);
+            subscriber.emit(errorMessage, message);
+          } catch (err) {
+            switch (err.name) {
+              case QueueServiceError.name:
+                subscriber.emit('error', err, message);
+                break;
+              default:
+                subscriber.emit('processing_error', err, message);
+                break;
+            }
           }
-        }
       }
 
       // Emit a `response_processed` event once all messages in the response have been processed.
-      consumer.emit('response_processed');
+      subscriber.emit('response_processed');
 
       // Poll again for new messages once all messages in the queue response have been processed.
-      consumer._poll();
+      subscriber._poll();
     } else if (err && isAuthenticationError(err)) {
       // If there was an authentication error, pause polling for a bit before retrying.
       debug('There was an error with your credentials. Pausing before retrying.');
-      setTimeout(() => consumer._poll(), consumer.authenticationErrorTimeoutSeconds * 1000);
+      setTimeout(() => subscriber._poll(), subscriber.authenticationErrorTimeoutSeconds * 1000);
     } else {
       // If there were no messages in the response, start polling again after a set delay.
-      setTimeout(() => consumer._poll(), consumer.pollDelaySeconds * 1000);
+      setTimeout(() => subscriber._poll(), subscriber.pollDelaySeconds * 500);
     }
   }
 
@@ -171,11 +182,11 @@ class Consumer extends EventEmitter {
    * @param {Object} message - The message object being processed.
    */
   async _processMessage(message) {
-    const consumer = this;
+    const subscriber = this;
     this.emit('message_received', message);
     try {
       await new Promise((resolve, reject) => {
-        consumer.handleMessage(message, (err) => {
+        subscriber.handleMessage(message, (err) => {
           if (err) {
             reject(new Error(`Unexpected message handler failure: ${err.message}`));
           } else {
@@ -184,7 +195,7 @@ class Consumer extends EventEmitter {
         });
       });
 
-      await consumer._deleteMessage(message);
+      await subscriber._deleteMessage(message);
 
       this.emit('message_processed', message);
     } catch (err) {
