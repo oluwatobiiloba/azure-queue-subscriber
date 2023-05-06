@@ -58,7 +58,7 @@ class Consumer extends EventEmitter {
     this.stopped = true;
     this.isWaiting = false;
     this.batchSize = options.batchSize || 1;
-    this.visibilityTimeout = undefined;
+    this.visibilityTimeout = options.visibilityTimeout || null;
     this.terminateVisibilityTimeout = undefined;
     this.pollDelaySeconds = options.pollDelaySeconds || 1;
     this.maximumExecutionTimeSeconds = options.maximumExecutionTimeSeconds || 10;
@@ -131,35 +131,34 @@ class Consumer extends EventEmitter {
   async _handleQueueServiceResponse(err, response) {
     const subscriber = this;
     if (err || !response) {
-      this.emit('error', new QueueServiceError('Queue service receive message failed: ' + err.message));
+      subscriber.emit('error', new QueueServiceError('Queue service failed to recieve a message: ' + err.message));
     }
     debug('Received queue service response');
     debug(response);
     if (response?.receivedMessageItems?.length === 0) subscriber.emit('No messages availabe to be processed');
-    if (response && response?.receivedMessageItems.length > 0) {
+    if (response && response?.receivedMessageItems?.length > 0) {
       // If there are messages in the response, process them.
       for (const message of response.receivedMessageItems) {
-          try {
-            if ((message.dequeueCount > this.maximumRetries) || !this.maximumRetries) {
-              await this._processMessage(message);
-              subscriber.emit('message_processed', message);
-              return;
-            }
-            
-            await this._deleteMessage(message);
-            const errorMessage = `message failed after ${message.dequeueCount} times and will be deleted`;
-            debug(errorMessage);
-            subscriber.emit(errorMessage, message);
-          } catch (err) {
-            switch (err.name) {
-              case QueueServiceError.name:
-                subscriber.emit('error', err, message);
-                break;
-              default:
-                subscriber.emit('processing_error', err, message);
-                break;
-            }
+        try {
+          if ((message.dequeueCount > this.maximumRetries) || !this.maximumRetries) {
+            await this._processMessage(message);
+            subscriber.emit('message_processed', message);
+            return;
           }
+          await this._deleteMessage(message);
+          const errorMessage = `message failed after ${message.dequeueCount} times and will be deleted`;
+          debug(errorMessage);
+          subscriber.emit(errorMessage, message);
+        } catch (err) {
+          switch (err.name) {
+            case QueueServiceError.name:
+              subscriber.emit('error', err, message);
+              break;
+            default:
+              subscriber.emit('processing_error', err, message);
+              break;
+          }
+        }
       }
 
       // Emit a `response_processed` event once all messages in the response have been processed.
