@@ -95,5 +95,5 @@ consumer.start();
 
 
 ### Credits
-This node package is an adaptation of  [azure-queue-consumer](https://github.com/bbc/azure-queue-consumer)
+This node package is an adaptation of  [azure-queue-consumer](https://www.npmjs.com/package/azure-queue-consumer)
 
