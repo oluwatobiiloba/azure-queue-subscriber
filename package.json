@@ -1,6 +1,6 @@
 {
   "name": "azure-queue-subscriber",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "A package for consuming messages from an Azure Queue",
   "main": "index.js",
   "scripts": {
