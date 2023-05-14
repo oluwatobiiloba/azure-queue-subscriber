@@ -141,7 +141,7 @@ class Consumer extends EventEmitter {
       for (const message of response.receivedMessageItems) {
         try {
           if (!this.maximumRetries) return this._processMessage(message);
-          if (message.dequeueCount > this.maximumRetries) {
+          if (message.dequeueCount < this.maximumRetries) {
             await this._processMessage(message);
             subscriber.emit('message_processed', message);
             return;
