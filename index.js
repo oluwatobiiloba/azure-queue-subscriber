@@ -26,9 +26,26 @@ function validate(options, requiredOptions) {
     }
   }
 
-  if (options.batchSize > 10 || options.batchSize < 1) {
-    throw new Error('Batch size must be between 1 and 10.');
+  if (options.batchSize > 30 || options.batchSize < 1) {
+    throw new Error('batchSize must be between 1 and 30.');
   }
+
+  if (options.batchSize && (typeof options.batchSize !== 'number' || options.batchSize % 1 !== 0)) {
+    throw new Error('batchSize must be between 1 and 10 and be a number.');
+  }
+
+  if (options.visibilityTimeout && options.visibilityTimeout < 1) {
+    throw new Error('visibilityTimeout must be greater than 0.');
+  }
+
+  if (options.handleMessage && typeof options.handleMessage !== 'function') {
+    throw new Error('handleMessage must be a function.');
+  }
+
+  if (options.queueService && !(options.queueService instanceof QueueClient)) {
+    throw new Error('queueService must be an instance of QueueClient.');
+  }
+
 }
 
 /**
@@ -95,6 +112,7 @@ class Consumer extends EventEmitter {
   stop() {
     debug('Stopping consumer');
     this.emit('stopped');
+    this.isWaiting = true;
     this.stopped = true;
   }
 
@@ -107,6 +125,9 @@ class Consumer extends EventEmitter {
       timeout: this.maximumExecutionTimeSeconds * 1000,
       visibilityTimeout: this.visibilityTimeout
     };
+
+    //set polling flag to true
+    this.isWaiting = true;
 
     if (!this.stopped) {
       debug('Polling for messages');
@@ -161,10 +182,8 @@ class Consumer extends EventEmitter {
           }
         }
       }
-
       // Emit a `response_processed` event once all messages in the response have been processed.
       subscriber.emit('response_processed');
-
       // Poll again for new messages once all messages in the queue response have been processed.
       subscriber._poll();
     } else if (err && isAuthenticationError(err)) {

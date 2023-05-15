@@ -131,5 +131,184 @@ describe('Consumer', () => {
         consumer.stop();
       });
     }).timeout(3000);
+
+    it('should throw an error when processing messages', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: (message) => {
+          throw new Error(`Test error: ${message.messageText}`);
+        }
+      };
+      const consumer = new Consumer(options);
+      // Add a test message to the queue
+      const queueClient = new QueueClient(options.connectionString, options.queueName);
+      queueClient.sendMessage('Test message');
+      // Test queue should be empty upon test completion
+      consumer.start();
+      consumer.on('processing_error', () => {
+        consumer.stop();
+      });
+    }).timeout(3000);
+  });
+
+  describe('#should throw error for invalid options', () => {
+    it('should throw an error if handleMessage is not a function', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: 'not a function'
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /handleMessage must be a function/);
+    });
+
+    it('should throw an error if batchSize is not a number', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub(),
+        batchSize: 'not a number'
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /batchSize must be between 1 and 10 and be a number./);
+    });
+
+    it('should throw an error if batchSize is less than 1', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub(),
+        batchSize: 0
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /batchSize must be between 1 and 30./);
+    });
+
+    it('should throw an error if connectionString is not provided', () => {
+      const options = {
+        queueName,
+        handleMessage: sinon.stub()
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /connectionString is required./);
+    });
+
+    it('should throw an error if queueName is not provided', () => {
+      const options = {
+        connectionString,
+        handleMessage: sinon.stub()
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /queueName is required/);
+    });
+
+    it('should throw an error if handleMessage is not provided or not a function', () => {
+      const options = {
+        connectionString,
+        queueName,
+        handleMessage: 'not a function'
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /handleMessage must be a function/);
+    });
+
+    it('should throw an error if QueueClient is not an instance QueueClient', () => {
+      const options = {
+        connectionString,
+        queueName,
+        queueService: 'not a function',
+        handleMessage: sinon.stub()
+      };
+      assert.throws(() => {
+        new Consumer(options);
+      }, /queueService must be an instance of QueueClient./);
+    });
+  });
+
+  describe('_poll()', () => {
+    let consumer;
+    beforeEach(() => {
+      consumer = new Consumer({
+        connectionString,
+        queueName,
+        handleMessage: sinon.stub(),
+        batchSize: 10,
+        maximumExecutionTimeSeconds: 30,
+        visibilityTimeout: 10,
+        maximumRetries: 2
+      });
+    });
+    it('receives messages with the correct parameters', async () => {
+      const response = {
+        receivedMessageItems: [
+          {
+            messageId: '899d6748-5f4a-4092-addf-52e4d3686ee3',
+            insertedOn: '2023-05-14T23:21:29.000Z',
+            expiresOn: '2023-05-21T23:21:29.000Z',
+            popReceipt: 'AgAAAAMAAAAAAAAAHhLuxruG2QE=',
+            nextVisibleOn: '2023-05-14T23:28:23.000Z',
+            dequeueCount: 1,
+            messageText: 'Test message'
+          }
+        ]
+      };
+      await consumer._poll();
+      assert(consumer._handleQueueServiceResponse(null, response), 'should call _handleQueueServiceResponse');
+    });
+
+    it('check if an error is recieved', async () => {
+      const err = new Error('test error');
+      assert(consumer._handleQueueServiceResponse(err, null), 'should call _handleQueueServiceResponse');
+    });
+
+    it('deletes messages that have exceeded retry count', async () => {
+      const response = {
+        receivedMessageItems: [
+          {
+            messageId: '899d6748-5f4a-4092-addf-52e4d3686ee3',
+            insertedOn: '2023-05-14T23:21:29.000Z',
+            expiresOn: '2023-05-21T23:21:29.000Z',
+            popReceipt: 'AgAAAAMAAAAAAAAAHhLuxruG2QE=',
+            nextVisibleOn: '2023-05-14T23:28:23.000Z',
+            dequeueCount: 3,
+            messageText: 'Test message'
+          }
+        ]
+      };
+      assert(consumer._handleQueueServiceResponse(null, response), 'should call processMessage');
+    });
+
+    it('throw error if _processMessage hits an error', async () => {
+      const response = {
+        receivedMessageItems: [
+          {
+            messageId: '899d6748-5f4a-4092-addf-52e4d3686ee3',
+            insertedOn: '2023-05-14T23:21:29.000Z',
+            expiresOn: '2023-05-21T23:21:29.000Z',
+            popReceipt: 'AgAAAAMAAAAAAAAAHhLuxruG2QE=',
+            nextVisibleOn: '2023-05-14T23:28:23.000Z',
+            dequeueCount: 3
+          }
+        ]
+      };
+      assert(consumer._handleQueueServiceResponse(null, response), 'should throw QueueServiceError');
+    });
+
+    it('should continue polling if message is empty', async () => {
+      const response = {
+        receivedMessageItems: []
+      };
+      assert(consumer._handleQueueServiceResponse(null, response), 'should restart polling');
+      await new Promise((resolve)=>setTimeout(resolve, 502));
+      assert(consumer.isWaiting, 'Polling flag should be set to true.');
+      consumer.stop();
+    });
   });
 });
