@@ -5,6 +5,7 @@ const { QueueClient } = require('@azure/storage-queue');
 const debug = require('debug')('azure-queue-subscriber');
 const requiredOptions = ['queueName', 'handleMessage', 'connectionString'];
 const autoBind = require('auto-bind');
+const { Logtail } = require('@logtail/node');
 
 class QueueServiceError extends Error {
   constructor() {
@@ -46,6 +47,10 @@ function validate(options, requiredOptions) {
     throw new Error('queueService must be an instance of QueueClient.');
   }
 
+  if (options.useLogtailLogger && !(options.logtailKey || options.loggerService instanceof Logtail)) {
+    throw new Error('logtail key or instance is required to use the logger functionality');
+  }
+
 }
 
 /**
@@ -82,6 +87,13 @@ class Consumer extends EventEmitter {
     this.authenticationErrorTimeoutSeconds = options.authenticationErrorTimeoutSeconds || 10;
     this.queueService = options.queueService || new QueueClient(this.connectionString, this.queueName);
     this.maximumRetries = options.maximumRetries || null;
+    this.useLogtailLogger = options.useLogtailLogger || false;
+    this.logtailKey = options.logtailKey || null;
+    try {
+      this.loggerService = this.useLogtailLogger ? options.loggerService || new Logtail(this.logtailKey) : null;
+    } catch (err) {
+      throw new Error(`Error creating Logtail logger: ${err}`);
+    }
     // Bind `this` to methods used by the class
     autoBind(this);
   }
@@ -101,6 +113,7 @@ class Consumer extends EventEmitter {
   start() {
     if (this.stopped) {
       debug('Starting consumer');
+      if (this.loggerService) this.loggerService.info('Starting consumer');
       this.stopped = false;
       this._poll();
     }
@@ -169,6 +182,13 @@ class Consumer extends EventEmitter {
           }
           await this._deleteMessage(message);
           const errorMessage = `message failed after ${message.dequeueCount} times and will be deleted`;
+          this.loggerService.info('message_processing_failed', {
+            messageId: message.messageId,
+            info: errorMessage
+          }).catch((logError) => {
+            this.emit('Error logging with Logtail:', logError);
+          });
+          this.loggerService.flush();
           debug(errorMessage);
           subscriber.emit(errorMessage, message);
         } catch (err) {
@@ -231,6 +251,15 @@ class Consumer extends EventEmitter {
    */
   _handleError(err, message) {
     // If the error name is `QueueServiceError`, emit an `error` event. Otherwise, emit a `processing_error` event.
+    if (this.loggerService) {
+      this.loggerService.error(err, 'message-processing', {
+        message: message.messageText,
+        messageId: message.messageId
+      }).catch((logError) => {
+        this.emit('Error logging with Logtail:', logError);
+      });
+      this.loggerService.flush();
+    }
     if (err.name === QueueServiceError.name) {
       this.emit('error', err, message);
     } else {
@@ -247,10 +276,20 @@ class Consumer extends EventEmitter {
     try {
       await this.queueService.deleteMessage(message.messageId, message.popReceipt);
     } catch (err) {
+      if (this.loggerService) {
+        this.loggerService.error(err, 'message-deletion', {
+          messageId: message.messageId,
+          popReceipt: message.popReceipt
+        }).catch((logError) => {
+          this.emit('Error logging with Logtail:', logError);
+        });
+        this.loggerService.flush();
+      }
       // If there is an error while deleting the message from the queue, throw a new QueueServiceError with the error message.
       throw new QueueServiceError(`Queue service delete message failed: ${err.message}`);
     }
   }
+
 }
 
 module.exports = Consumer;
