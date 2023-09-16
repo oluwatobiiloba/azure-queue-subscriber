@@ -1,11 +1,11 @@
-'use strict';
+"use strict";
 
-const EventEmitter = require('events').EventEmitter;
-const { QueueClient } = require('@azure/storage-queue');
-const debug = require('debug')('azure-queue-subscriber');
-const requiredOptions = ['queueName', 'handleMessage', 'connectionString'];
-const autoBind = require('auto-bind');
-const { Logtail } = require('@logtail/node');
+const EventEmitter = require("events").EventEmitter;
+const { QueueClient } = require("@azure/storage-queue");
+const debug = require("debug")("azure-queue-subscriber");
+const requiredOptions = ["queueName", "handleMessage", "connectionString"];
+const autoBind = require("auto-bind");
+const { Logtail } = require("@logtail/node");
 
 class QueueServiceError extends Error {
   constructor() {
@@ -28,29 +28,36 @@ function validate(options, requiredOptions) {
   }
 
   if (options.batchSize > 30 || options.batchSize < 1) {
-    throw new Error('batchSize must be between 1 and 30.');
+    throw new Error("batchSize must be between 1 and 30.");
   }
 
-  if (options.batchSize && (typeof options.batchSize !== 'number' || options.batchSize % 1 !== 0)) {
-    throw new Error('batchSize must be between 1 and 10 and be a number.');
+  if (
+    options.batchSize &&
+    (typeof options.batchSize !== "number" || options.batchSize % 1 !== 0)
+  ) {
+    throw new Error("batchSize must be between 1 and 10 and be a number.");
   }
 
   if (options.visibilityTimeout && options.visibilityTimeout < 1) {
-    throw new Error('visibilityTimeout must be greater than 0.');
+    throw new Error("visibilityTimeout must be greater than 0.");
   }
 
-  if (options.handleMessage && typeof options.handleMessage !== 'function') {
-    throw new Error('handleMessage must be a function.');
+  if (options.handleMessage && typeof options.handleMessage !== "function") {
+    throw new Error("handleMessage must be a function.");
   }
 
   if (options.queueService && !(options.queueService instanceof QueueClient)) {
-    throw new Error('queueService must be an instance of QueueClient.');
+    throw new Error("queueService must be an instance of QueueClient.");
   }
 
-  if (options.useLogtailLogger && !(options.logtailKey || options.loggerService instanceof Logtail)) {
-    throw new Error('logtail key or instance is required to use the logger functionality');
+  if (
+    options.useLogtailLogger &&
+    !(options.logtailKey || options.loggerService instanceof Logtail)
+  ) {
+    throw new Error(
+      "logtail key or instance is required to use the logger functionality"
+    );
   }
-
 }
 
 /**
@@ -59,7 +66,7 @@ function validate(options, requiredOptions) {
  * @returns {boolean} Returns true if the error is due to authentication failure, false otherwise.
  */
 function isAuthenticationError(err) {
-  return (err.statusCode === 403 || err.code === 'CredentialsError');
+  return err.statusCode === 403 || err.code === "CredentialsError";
 }
 
 /**
@@ -83,14 +90,20 @@ class Consumer extends EventEmitter {
     this.visibilityTimeout = options.visibilityTimeout || null;
     this.terminateVisibilityTimeout = undefined;
     this.pollDelaySeconds = options.pollDelaySeconds || 1;
-    this.maximumExecutionTimeSeconds = options.maximumExecutionTimeSeconds || 10;
-    this.authenticationErrorTimeoutSeconds = options.authenticationErrorTimeoutSeconds || 10;
-    this.queueService = options.queueService || new QueueClient(this.connectionString, this.queueName);
+    this.maximumExecutionTimeSeconds =
+      options.maximumExecutionTimeSeconds || 10;
+    this.authenticationErrorTimeoutSeconds =
+      options.authenticationErrorTimeoutSeconds || 10;
+    this.queueService =
+      options.queueService ||
+      new QueueClient(this.connectionString, this.queueName);
     this.maximumRetries = options.maximumRetries || null;
     this.useLogtailLogger = options.useLogtailLogger || false;
     this.logtailKey = options.logtailKey || null;
     try {
-      this.loggerService = this.useLogtailLogger ? options.loggerService || new Logtail(this.logtailKey) : null;
+      this.loggerService = this.useLogtailLogger
+        ? options.loggerService || new Logtail(this.logtailKey)
+        : null;
     } catch (err) {
       throw new Error(`Error creating Logtail logger: ${err}`);
     }
@@ -112,8 +125,8 @@ class Consumer extends EventEmitter {
    */
   start() {
     if (this.stopped) {
-      debug('Starting consumer');
-      if (this.loggerService) this.loggerService.info('Starting consumer');
+      debug("Starting consumer");
+      this._log("Starting consumer", "info");
       this.stopped = false;
       this._poll();
     }
@@ -123,8 +136,8 @@ class Consumer extends EventEmitter {
    * Method to stop the running Consumer instance.
    */
   stop() {
-    debug('Stopping consumer');
-    this.emit('stopped');
+    debug("Stopping consumer");
+    this.emit("stopped");
     this.isWaiting = true;
     this.stopped = true;
   }
@@ -136,16 +149,17 @@ class Consumer extends EventEmitter {
     const receiveParams = {
       numberOfMessages: this.batchSize,
       timeout: this.maximumExecutionTimeSeconds * 1000,
-      visibilityTimeout: this.visibilityTimeout
+      visibilityTimeout: this.visibilityTimeout,
     };
 
     //set polling flag to true
     this.isWaiting = true;
 
     if (!this.stopped) {
-      debug('Polling for messages');
-      this.emit('starting listening process');
-      await this.queueService.receiveMessages(receiveParams)
+      debug("Polling for messages");
+      this.emit("starting");
+      await this.queueService
+        .receiveMessages(receiveParams)
         .then((response) => {
           this._handleQueueServiceResponse(null, response);
         })
@@ -153,7 +167,7 @@ class Consumer extends EventEmitter {
           this._handleQueueServiceResponse(err, null);
         });
     } else {
-      this.emit('stopped');
+      this.emit("stopped");
     }
   }
 
@@ -165,11 +179,17 @@ class Consumer extends EventEmitter {
   async _handleQueueServiceResponse(err, response) {
     const subscriber = this;
     if (err || !response) {
-      subscriber.emit('error', new QueueServiceError('Queue service failed to recieve a message: ' + err.message));
+      subscriber.emit(
+        "error",
+        new QueueServiceError(
+          "Queue service failed to recieve a message: " + err.message
+        )
+      );
     }
-    debug('Received queue service response');
+    debug("Received queue service response");
     debug(response);
-    if (response?.receivedMessageItems?.length === 0) subscriber.emit('No messages availabe to be processed');
+    if (response?.receivedMessageItems?.length === 0)
+      subscriber.emit("No messages availabe to be processed");
     if (response && response?.receivedMessageItems?.length > 0) {
       // If there are messages in the response, process them.
       for (const message of response.receivedMessageItems) {
@@ -177,39 +197,54 @@ class Consumer extends EventEmitter {
           if (!this.maximumRetries) return this._processMessage(message);
           if (message.dequeueCount < this.maximumRetries) {
             await this._processMessage(message);
-            subscriber.emit('message_processed', message);
+            subscriber.emit("message_processed", message);
+            subscriber._poll();
             return;
           }
           await this._deleteMessage(message);
           const errorMessage = `message failed after ${message.dequeueCount} times and will be deleted`;
-          this.loggerService.info('message_processing_failed', {
+
+          this._log("message_processing_failed", {
             messageId: message.messageId,
-            info: errorMessage
-          }).catch((logError) => {
-            this.emit('Error logging with Logtail:', logError);
+            info: errorMessage,
           });
-          this.loggerService.flush();
+          // this.loggerService
+          //   .info("message_processing_failed", {
+          //     messageId: message.messageId,
+          //     info: errorMessage,
+          //   })
+          //   .catch((logError) => {
+          //     this.emit("Error logging with Logtail:", logError);
+          //   });
           debug(errorMessage);
-          subscriber.emit(errorMessage, message);
+          subscriber.emit("delete_failed_message", errorMessage);
+          subscriber._poll();
         } catch (err) {
           switch (err.name) {
             case QueueServiceError.name:
-              subscriber.emit('error', err, message);
+              subscriber.emit("error", err, message);
+              subscriber._poll();
               break;
             default:
-              subscriber.emit('processing_error', err, message);
+              subscriber.emit("processing_error", err, message);
+              subscriber._poll();
               break;
           }
         }
       }
       // Emit a `response_processed` event once all messages in the response have been processed.
-      subscriber.emit('response_processed');
+      subscriber.emit("response_processed");
       // Poll again for new messages once all messages in the queue response have been processed.
       subscriber._poll();
     } else if (err && isAuthenticationError(err)) {
       // If there was an authentication error, pause polling for a bit before retrying.
-      debug('There was an error with your credentials. Pausing before retrying.');
-      setTimeout(() => subscriber._poll(), subscriber.authenticationErrorTimeoutSeconds * 1000);
+      debug(
+        "There was an error with your credentials. Pausing before retrying."
+      );
+      setTimeout(
+        () => subscriber._poll(),
+        subscriber.authenticationErrorTimeoutSeconds * 1000
+      );
     } else {
       // If there were no messages in the response, start polling again after a set delay.
       setTimeout(() => subscriber._poll(), subscriber.pollDelaySeconds * 500);
@@ -222,12 +257,14 @@ class Consumer extends EventEmitter {
    */
   async _processMessage(message) {
     const subscriber = this;
-    this.emit('message_received', message);
+    this.emit("message_received", message);
     try {
       await new Promise((resolve, reject) => {
         subscriber.handleMessage(message, (err) => {
           if (err) {
-            reject(new Error(`Unexpected message handler failure: ${err.message}`));
+            reject(
+              new Error(`Unexpected message handler failure: ${err.message}`)
+            );
           } else {
             resolve();
           }
@@ -236,7 +273,7 @@ class Consumer extends EventEmitter {
 
       await subscriber._deleteMessage(message);
 
-      this.emit('message_processed', message);
+      this.emit("message_processed", message);
     } catch (err) {
       // If there is an error while processing a message, call `_handleError()` and throw the error.
       this._handleError(err, message);
@@ -250,20 +287,21 @@ class Consumer extends EventEmitter {
    * @param {Object} message - The message object that caused the error.
    */
   _handleError(err, message) {
-    // If the error name is `QueueServiceError`, emit an `error` event. Otherwise, emit a `processing_error` event.
     if (this.loggerService) {
-      this.loggerService.error(err, 'message-processing', {
-        message: message.messageText,
-        messageId: message.messageId
-      }).catch((logError) => {
-        this.emit('Error logging with Logtail:', logError);
-      });
+      this.loggerService
+        .error(err, "message-processing", {
+          message: message.messageText,
+          messageId: message.messageId,
+        })
+        .catch((logError) => {
+          this.emit("logtail_error", logError);
+        });
       this.loggerService.flush();
     }
     if (err.name === QueueServiceError.name) {
-      this.emit('error', err, message);
+      this.emit("error", err, message);
     } else {
-      this.emit('processing_error', err, message);
+      this.emit("processing_error", err, message);
     }
   }
 
@@ -274,22 +312,44 @@ class Consumer extends EventEmitter {
   async _deleteMessage(message) {
     debug(`Deleting message ${message.messageId}`);
     try {
-      await this.queueService.deleteMessage(message.messageId, message.popReceipt);
+      await this.queueService.deleteMessage(
+        message.messageId,
+        message.popReceipt
+      );
     } catch (err) {
       if (this.loggerService) {
-        this.loggerService.error(err, 'message-deletion', {
-          messageId: message.messageId,
-          popReceipt: message.popReceipt
-        }).catch((logError) => {
-          this.emit('Error logging with Logtail:', logError);
-        });
+        this.loggerService
+          .error(err, "message-deletion", {
+            messageId: message.messageId,
+            popReceipt: message.popReceipt,
+          })
+          .catch((logError) => {
+            this.emit("logtail_error", logError);
+          });
         this.loggerService.flush();
       }
       // If there is an error while deleting the message from the queue, throw a new QueueServiceError with the error message.
-      throw new QueueServiceError(`Queue service delete message failed: ${err.message}`);
+      throw new QueueServiceError(
+        `Queue service delete message failed: ${err.message}`
+      );
     }
   }
 
+  /**
+   * Private method to logging if logtail service is available
+   * @param {info} info - The message object to be logged.
+   */
+
+  async _log(info, type) {
+    try {
+      if (this.loggerService) {
+        this.loggerService[type](info);
+      }
+      this.loggerService.flush();
+    } catch (err) {
+      this.emit("logtail_error", err);
+    }
+  }
 }
 
 module.exports = Consumer;
